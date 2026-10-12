@@ -1,0 +1,55 @@
+<section class="verify" aria-labelledby="verify-title">
+  <header class="verify__head">
+    <h2 id="verify-title">Verify Your Share</h2>
+    @if (!store.loading() && !store.loadError()) {
+      <span class="progress" aria-live="polite">
+        <strong>{{ store.verifiedCount() }}</strong> of {{ store.enabledCount() }} shared
+      </span>
+    }
+  </header>
+
+  @if (demoMode) {
+    <p class="demo-banner" role="note">
+      <strong>Demo mode.</strong> Sign-in, posting and verification are simulated — nothing is posted to your accounts.
+      Real sharing needs the Tisoro API and approved developer apps.
+    </p>
+  }
+
+  <ol class="steps">
+    <li>Tap <strong>Connect</strong> on a platform and sign in. We fill in your handle from your account.</li>
+    <li>
+      Tap <strong>Share</strong>. LinkedIn, Instagram and TikTok: check the caption and we post it for you.
+      X and Facebook open the post for you — on Facebook, paste the copied caption. Make sure the post is <strong>Public</strong>.
+    </li>
+    <li>For X and Facebook, tap <strong>Submit</strong> after posting. We'll show a green tick once we find it — this can take a few minutes.</li>
+  </ol>
+  <p class="lead">
+    Once a share is confirmed, Tisoro will record the ceremony on your company's Tisoro Network profile.
+    You don't have to use every platform — skip any you don't use.
+  </p>
+
+  @if (store.loading()) {
+    <div class="grid" aria-busy="true">
+      @for (_ of [1, 2, 3, 4, 5]; track $index) {
+        <div class="skeleton"></div>
+      }
+    </div>
+  } @else if (store.loadError(); as error) {
+    <p class="load-error" role="alert">
+      {{ error }}
+      <button type="button" class="btn btn--link" (click)="store.load(ceremonyId())">Try again</button>
+    </p>
+  } @else {
+    <div class="grid">
+      @for (card of store.cards(); track card.meta.platform) {
+        <app-platform-card [state]="card" />
+      }
+    </div>
+  }
+</section>
+
+@if (store.captionDialogFor(); as platform) {
+  @if (store.state(platform); as s) {
+    <app-caption-dialog [state]="s" (confirmed)="confirmPublish(platform, $event)" (cancelled)="store.cancelPublish()" />
+  }
+}
