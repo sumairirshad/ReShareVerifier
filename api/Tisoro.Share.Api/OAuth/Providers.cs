@@ -177,6 +177,45 @@ public sealed class InstagramProvider(HttpClient http, IOptions<OAuthOptions> op
             Required(Str(me, "username"), "username"),
             IsPersonalInstagram: string.Equals(accountType, "PERSONAL", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// Publishes the ceremony video as a Reel (spec §4.4): creates a media container from
+    /// <paramref name="videoUrl"/> (must be a public HTTPS URL Instagram's servers can fetch), polls it
+    /// until processed, then publishes it. Returns the published Reel's permalink.
+    /// </summary>
+    public async Task<string> PublishReelAsync(string accessToken, string igUserId, string videoUrl, string caption, CancellationToken ct)
+    {
+        var container = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media", new()
+        {
+            ["media_type"] = "REELS",
+            ["video_url"] = videoUrl,
+            ["caption"] = caption,
+        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
+        var containerId = Required(Str(container, "id"), "id");
+
+        // No background job runner yet, so poll inline with a bounded wait (spec's poller comes later).
+        var ready = false;
+        for (var attempt = 0; attempt < 20 && !ready; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            var status = await GetJsonAsync($"https://graph.instagram.com/v23.0/{containerId}?fields=status_code", ct, accessToken);
+            var code = Str(status, "status_code");
+            if (code is "ERROR" or "EXPIRED")
+                throw new OAuthProviderException("provider_error", "Instagram couldn't process the video for this Reel.");
+            ready = code == "FINISHED";
+        }
+        if (!ready)
+            throw new OAuthProviderException("provider_error", "Instagram is still processing the video — please try again shortly.");
+
+        var publish = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media_publish", new()
+        {
+            ["creation_id"] = containerId,
+        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
+        var mediaId = Required(Str(publish, "id"), "id");
+
+        var media = await GetJsonAsync($"https://graph.instagram.com/v23.0/{mediaId}?fields=permalink", ct, accessToken);
+        return Str(media, "permalink") ?? $"https://www.instagram.com/reel/{mediaId}/";
+    }
 }
 
 /// <summary>TikTok Login Kit (v2) + Content Posting API.</summary>

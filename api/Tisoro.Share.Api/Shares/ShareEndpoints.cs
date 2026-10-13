@@ -120,6 +120,42 @@ public static class ShareEndpoints
             }
         });
 
+        // Instagram Reel publish via the Graph API, using the token stored at Connect (spec §4.4).
+        app.MapPost("/api/shares/instagram/publish", async (PublishRequest body, HttpContext http,
+            SubmissionStore submissions, ConnectionStore connections, InstagramProvider instagram,
+            IConfiguration config, ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            var sid = http.Id();
+            var connection = connections.Get(sid, "instagram");
+            var accessToken = connection is null ? null : connections.GetAccessToken(sid, "instagram");
+            if (connection is null || accessToken is null)
+                return Results.Problem(statusCode: 401, title: "Not connected",
+                    detail: "Your Instagram sign-in expired — connect again.");
+
+            var videoUrl = config["Share:Ceremony:Platforms:instagram:VideoUrl"];
+            if (string.IsNullOrEmpty(videoUrl))
+                return Results.Problem(statusCode: 500, title: "Not configured",
+                    detail: "No ceremony video URL is configured for Instagram.");
+
+            try
+            {
+                var permalink = await instagram.PublishReelAsync(accessToken, connection.PlatformUserId, videoUrl, body.Caption, ct);
+                submissions.Update(sid, body.CeremonyId, "instagram", s => s with
+                {
+                    Status = "Verified",
+                    SharedPostUrl = permalink,
+                    FailureReason = null,
+                });
+                return Results.Ok(ToDto(sid, body.CeremonyId, "instagram", submissions, connections));
+            }
+            catch (OAuthProviderException ex)
+            {
+                loggers.CreateLogger("InstagramPublish").LogWarning("Publish failed: {Error} {Message}", ex.Error, ex.Message);
+                submissions.Update(sid, body.CeremonyId, "instagram", s => s with { Status = "Failed", FailureReason = ex.Message });
+                return Results.Problem(statusCode: 502, title: "Instagram publish failed", detail: ex.Message);
+            }
+        });
+
         // Next step: real verification/publishing on top of the stored tokens.
         IResult NotYet(HttpContext _) => Results.Problem(statusCode: 501, title: "Not implemented",
             detail: "Sign-in works; posting and verification are the next step and aren't switched on yet.");
