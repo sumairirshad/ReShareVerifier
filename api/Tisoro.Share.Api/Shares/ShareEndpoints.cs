@@ -33,6 +33,8 @@ public sealed record SubmissionDto(
 
 public sealed record CeremonyRequest(string CeremonyId);
 
+public sealed record PublishRequest(string CeremonyId, string Caption);
+
 public sealed class ShareHub : Hub
 {
     public static string Group(string sid, string ceremonyId) => $"{sid}:{ceremonyId}";
@@ -79,6 +81,79 @@ public static class ShareEndpoints
             if (!Platforms.All.Contains(platform)) return Results.NotFound();
             submissions.Update(http.Id(), body.CeremonyId, platform, s => s with { ShareClickedAt = DateTimeOffset.UtcNow });
             return Results.Ok(ToDto(http.Id(), body.CeremonyId, platform, submissions, connections));
+        });
+
+        // LinkedIn reshare via the Posts API, using the token stored at Connect (spec §4.2).
+        app.MapPost("/api/shares/linkedin/publish", async (PublishRequest body, HttpContext http,
+            SubmissionStore submissions, ConnectionStore connections, LinkedInProvider linkedIn,
+            IConfiguration config, ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            var sid = http.Id();
+            var connection = connections.Get(sid, "linkedin");
+            var accessToken = connection is null ? null : connections.GetAccessToken(sid, "linkedin");
+            if (connection is null || accessToken is null)
+                return Results.Problem(statusCode: 401, title: "Not connected",
+                    detail: "Your LinkedIn sign-in expired — connect again.");
+
+            var parentUrn = config["Share:Ceremony:Platforms:linkedin:PostId"];
+            if (string.IsNullOrEmpty(parentUrn))
+                return Results.Problem(statusCode: 500, title: "Not configured",
+                    detail: "No LinkedIn post is configured for this ceremony.");
+
+            try
+            {
+                var postUrn = await linkedIn.PublishReshareAsync(
+                    accessToken, $"urn:li:person:{connection.PlatformUserId}", parentUrn, body.Caption, ct);
+                submissions.Update(sid, body.CeremonyId, "linkedin", s => s with
+                {
+                    Status = "Verified",
+                    SharedPostUrl = $"https://www.linkedin.com/feed/update/{Uri.EscapeDataString(postUrn)}/",
+                    FailureReason = null,
+                });
+                return Results.Ok(ToDto(sid, body.CeremonyId, "linkedin", submissions, connections));
+            }
+            catch (OAuthProviderException ex)
+            {
+                loggers.CreateLogger("LinkedInPublish").LogWarning("Publish failed: {Error} {Message}", ex.Error, ex.Message);
+                submissions.Update(sid, body.CeremonyId, "linkedin", s => s with { Status = "Failed", FailureReason = ex.Message });
+                return Results.Problem(statusCode: 502, title: "LinkedIn publish failed", detail: ex.Message);
+            }
+        });
+
+        // Instagram Reel publish via the Graph API, using the token stored at Connect (spec §4.4).
+        app.MapPost("/api/shares/instagram/publish", async (PublishRequest body, HttpContext http,
+            SubmissionStore submissions, ConnectionStore connections, InstagramProvider instagram,
+            IConfiguration config, ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            var sid = http.Id();
+            var connection = connections.Get(sid, "instagram");
+            var accessToken = connection is null ? null : connections.GetAccessToken(sid, "instagram");
+            if (connection is null || accessToken is null)
+                return Results.Problem(statusCode: 401, title: "Not connected",
+                    detail: "Your Instagram sign-in expired — connect again.");
+
+            var videoUrl = config["Share:Ceremony:Platforms:instagram:VideoUrl"];
+            if (string.IsNullOrEmpty(videoUrl))
+                return Results.Problem(statusCode: 500, title: "Not configured",
+                    detail: "No ceremony video URL is configured for Instagram.");
+
+            try
+            {
+                var permalink = await instagram.PublishReelAsync(accessToken, connection.PlatformUserId, videoUrl, body.Caption, ct);
+                submissions.Update(sid, body.CeremonyId, "instagram", s => s with
+                {
+                    Status = "Verified",
+                    SharedPostUrl = permalink,
+                    FailureReason = null,
+                });
+                return Results.Ok(ToDto(sid, body.CeremonyId, "instagram", submissions, connections));
+            }
+            catch (OAuthProviderException ex)
+            {
+                loggers.CreateLogger("InstagramPublish").LogWarning("Publish failed: {Error} {Message}", ex.Error, ex.Message);
+                submissions.Update(sid, body.CeremonyId, "instagram", s => s with { Status = "Failed", FailureReason = ex.Message });
+                return Results.Problem(statusCode: 502, title: "Instagram publish failed", detail: ex.Message);
+            }
         });
 
         // Next step: real verification/publishing on top of the stored tokens.

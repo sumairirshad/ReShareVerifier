@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,42 @@ public sealed class LinkedInProvider(HttpClient http, IOptions<OAuthOptions> opt
         // OIDC userinfo has no public vanity handle, so show the member's name.
         var me = await GetJsonAsync("https://api.linkedin.com/v2/userinfo", ct, token.AccessToken);
         return new ProviderProfile(Required(Str(me, "sub"), "sub"), Str(me, "name") ?? "LinkedIn member");
+    }
+
+    /// <summary>
+    /// Reshares Tisoro's post with the user's commentary via the Posts API (spec §4.2).
+    /// <paramref name="authorUrn"/> is "urn:li:person:{sub}"; <paramref name="parentUrn"/> is Tisoro's post URN.
+    /// Returns the created post's URN (from the `x-restli-id` response header; the API returns no body).
+    /// </summary>
+    public async Task<string> PublishReshareAsync(string accessToken, string authorUrn, string parentUrn, string commentary, CancellationToken ct)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, "https://api.linkedin.com/rest/posts")
+        {
+            Content = JsonContent.Create(new
+            {
+                author = authorUrn,
+                commentary,
+                visibility = "PUBLIC",
+                distribution = new { feedDistribution = "MAIN_FEED" },
+                lifecycleState = "PUBLISHED",
+                reshareContext = new { parent = parentUrn },
+            }),
+        };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        // LinkedIn accepts any version within the trailing 12 months; last month is always safely in range.
+        req.Headers.Add("LinkedIn-Version", DateTime.UtcNow.AddMonths(-1).ToString("yyyyMM"));
+        req.Headers.Add("X-Restli-Protocol-Version", "2.0.0");
+
+        using var res = await Http.SendAsync(req, ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            var body = await res.Content.ReadAsStringAsync(ct);
+            logger.LogWarning("LinkedIn publish failed: {Status} {Body}", (int)res.StatusCode, body);
+            throw new OAuthProviderException("provider_error", $"LinkedIn rejected the post ({(int)res.StatusCode}).");
+        }
+        return res.Headers.TryGetValues("x-restli-id", out var ids) && ids.FirstOrDefault() is { Length: > 0 } id
+            ? id
+            : throw new OAuthProviderException("provider_error", "LinkedIn did not return a post ID.");
     }
 }
 
@@ -139,6 +176,45 @@ public sealed class InstagramProvider(HttpClient http, IOptions<OAuthOptions> op
             Str(me, "user_id") ?? Required(token.PlatformUserId, "user_id"),
             Required(Str(me, "username"), "username"),
             IsPersonalInstagram: string.Equals(accountType, "PERSONAL", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Publishes the ceremony video as a Reel (spec §4.4): creates a media container from
+    /// <paramref name="videoUrl"/> (must be a public HTTPS URL Instagram's servers can fetch), polls it
+    /// until processed, then publishes it. Returns the published Reel's permalink.
+    /// </summary>
+    public async Task<string> PublishReelAsync(string accessToken, string igUserId, string videoUrl, string caption, CancellationToken ct)
+    {
+        var container = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media", new()
+        {
+            ["media_type"] = "REELS",
+            ["video_url"] = videoUrl,
+            ["caption"] = caption,
+        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
+        var containerId = Required(Str(container, "id"), "id");
+
+        // No background job runner yet, so poll inline with a bounded wait (spec's poller comes later).
+        var ready = false;
+        for (var attempt = 0; attempt < 20 && !ready; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            var status = await GetJsonAsync($"https://graph.instagram.com/v23.0/{containerId}?fields=status_code", ct, accessToken);
+            var code = Str(status, "status_code");
+            if (code is "ERROR" or "EXPIRED")
+                throw new OAuthProviderException("provider_error", "Instagram couldn't process the video for this Reel.");
+            ready = code == "FINISHED";
+        }
+        if (!ready)
+            throw new OAuthProviderException("provider_error", "Instagram is still processing the video — please try again shortly.");
+
+        var publish = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media_publish", new()
+        {
+            ["creation_id"] = containerId,
+        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
+        var mediaId = Required(Str(publish, "id"), "id");
+
+        var media = await GetJsonAsync($"https://graph.instagram.com/v23.0/{mediaId}?fields=permalink", ct, accessToken);
+        return Str(media, "permalink") ?? $"https://www.instagram.com/reel/{mediaId}/";
     }
 }
 

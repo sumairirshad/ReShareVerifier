@@ -1,8 +1,12 @@
 # Tisoro Share API (.NET 10)
 
 Backend for the Verify Your Share page. Currently implements **real OAuth** for LinkedIn, Facebook,
-Instagram, TikTok and X. The handle shown on each card comes from the user's own account. Publishing and
-verification endpoints return `501` until the next step.
+Instagram, TikTok and X, plus **real publishing** for LinkedIn (`POST /api/shares/linkedin/publish`
+reshares Tisoro's post via the Posts API, spec §4.2) and Instagram (`POST /api/shares/instagram/publish`
+posts the ceremony video as a Reel via the Graph API, spec §4.4). The handle shown on each card comes
+from the user's own account. The remaining publish/verify endpoints (X, Facebook, TikTok) return `501`
+until the next step — see `verify-your-share-spec.md` §2 for why Facebook can't be a direct-publish
+endpoint like LinkedIn/Instagram (Meta no longer lets apps post to a user's personal timeline).
 
 ## Run
 
@@ -23,7 +27,10 @@ Open https://127.0.0.1:4200/ceremonies/demo/verify-share. (`npm run start:demo` 
 | TikTok | developers.tiktok.com → app → Login Kit → *Redirect URI* | `https://127.0.0.1:4200/api/oauth/tiktok/callback` |
 | X | developer.x.com → app → User authentication settings (OAuth 2.0, *Web App / confidential client*) → *Callback URI* | `https://127.0.0.1:4200/api/oauth/x/callback` |
 
-Products/scopes to enable per app are listed in `appsettings.json` → `OAuth:*:Scopes`.
+Products/scopes to enable per app are listed in `appsettings.json` → `OAuth:*:Scopes`. For LinkedIn,
+`w_member_social` requires the **Share on LinkedIn** (or Community Management API) product — add it under
+your app's *Products* tab, not just *Sign In with LinkedIn using OpenID Connect* — or the authorize request
+is rejected with "Scope ... is not authorized for your application".
 
 Some providers (TikTok in particular, sometimes Instagram) refuse `localhost` redirect URIs. If so, expose
 the SPA through an HTTPS tunnel (e.g. ngrok), register `https://<tunnel-host>/api/oauth/<platform>/callback`,
@@ -60,5 +67,17 @@ testers/developers on the app until App Review / audit is approved. LinkedIn and
 3. `GET /api/oauth/{platform}/callback` → state checked (one-time) → code exchanged with the client secret →
    profile read (username/name) → token encrypted with Data Protection → redirect to SPA `/oauth/callback?handle=...`.
 4. `GET /api/ceremonies/{id}/shares` reports `connected` + `handle`, so a reload keeps the account connected.
+5. `POST /api/shares/linkedin/publish` uses the stored token to call the Posts API with
+   `reshareContext.parent = {ceremony's LinkedIn post URN}` and the confirmed caption as `commentary`.
+   The created post's URN comes back in the `x-restli-id` response header; on success the submission is
+   marked `Verified` with a `https://www.linkedin.com/feed/update/{urn}/` link. A 401 here means the stored
+   token expired — the SPA sends the user back to Connect.
+6. `POST /api/shares/instagram/publish` creates a Reel media container from
+   `Share:Ceremony:Platforms:instagram:VideoUrl` (must be a public HTTPS URL — Instagram's servers fetch
+   the video from it; see spec §10), polls its `status_code` until `FINISHED` (inline, up to ~60s — there's
+   no background job runner yet, so this is a stand-in for the spec's poller), then calls `media_publish`.
+   Marks `Verified` with the Reel's permalink. **`VideoUrl` is empty by default** — set it in
+   `appsettings.json` (or override via `.env`/user secrets as `Share__Ceremony__Platforms__instagram__VideoUrl`)
+   before trying this, or publish fails with "No ceremony video URL is configured for Instagram."
 
 Tokens and share progress are in memory for now (lost on restart); SQL Server tables from spec §6 come next.
