@@ -21,6 +21,6 @@ export const routes: Routes = [
         },
       ]
     : []),
-  // In mock mode there's no host app linking here with a real ceremony, so land on a demo one.
-  ...(environment.useMockApi ? [{ path: '', pathMatch: 'full' as const, redirectTo: 'ceremonies/demo/verify-share' }] : []),
+  // Outside production there's no host app linking here with a real ceremony, so land on a demo one.
+  ...(!environment.production ? [{ path: '', pathMatch: 'full' as const, redirectTo: 'ceremonies/demo/verify-share' }] : []),
 ];
