@@ -1,12 +1,10 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { Platform, ShareConfig, ShareSubmission } from './share.models';
+import { AdminCeremony, FacebookPage, Platform, ShareConfig, Submission, TikTokCreatorInfo } from './share.models';
 
-export type PublishPlatform = 'linkedin' | 'instagram' | 'tiktok';
-
-/** Thin client for the share endpoints in spec §5. */
+/** Client for the share endpoints of the .NET API. */
 @Injectable({ providedIn: 'root' })
 export class ShareApiService {
   private readonly http = inject(HttpClient);
@@ -16,45 +14,54 @@ export class ShareApiService {
     return this.http.get<ShareConfig>(`${this.base}/ceremonies/${ceremonyId}/share-config`);
   }
 
-  getSubmissions(ceremonyId: string): Observable<ShareSubmission[]> {
-    return this.http.get<ShareSubmission[]>(`${this.base}/ceremonies/${ceremonyId}/shares`);
+  getSubmissions(ceremonyId: string): Observable<Submission[]> {
+    return this.http.get<Submission[]>(`${this.base}/ceremonies/${ceremonyId}/shares`);
   }
 
-  /** Marks the start of the verification window (only posts after this time count). */
-  recordClick(ceremonyId: string, platform: Platform): Observable<ShareSubmission> {
-    return this.http.post<ShareSubmission>(`${this.base}/shares/${platform}/clicked`, { ceremonyId });
+  /** LinkedIn repost / X quote-post through Tisoro, as the connected user. */
+  publish(ceremonyId: string, platform: 'linkedin' | 'x', caption: string): Observable<Submission> {
+    return this.http.post<Submission>(`${this.base}/shares/${platform}/publish`, { ceremonyId, caption });
   }
 
-  /** Checks the account's recent posts for a quote of Tisoro's post. Handle comes from Connect or is typed. */
-  verifyX(ceremonyId: string, handle: string): Observable<ShareSubmission> {
-    return this.http.post<ShareSubmission>(`${this.base}/shares/x/verify`, { ceremonyId, handle });
+  /** Looks for the user in the reposts and quotes of Tisoro's X post. */
+  checkXRepost(ceremonyId: string, username: string): Observable<{ found: boolean; submission: Submission }> {
+    return this.http.post<{ found: boolean; submission: Submission }>(`${this.base}/shares/x/check`, { ceremonyId, username });
   }
 
-  /** Runs the /me/posts check with the token stored by the Facebook OAuth callback. */
-  verifyFacebook(ceremonyId: string): Observable<ShareSubmission> {
-    return this.http.post<ShareSubmission>(`${this.base}/shares/facebook/verify`, { ceremonyId });
+  /** Marks the Instagram share as waiting for the @tisoroglobal Story mention webhook. */
+  expectInstagramMention(ceremonyId: string, username: string): Observable<Submission> {
+    return this.http.post<Submission>(`${this.base}/shares/instagram/expect`, { ceremonyId, username });
   }
 
-  /** LinkedIn reshare, Instagram Reel, or TikTok video, using the stored OAuth token. */
-  publish(ceremonyId: string, platform: PublishPlatform, caption: string): Observable<ShareSubmission> {
-    return this.http.post<ShareSubmission>(`${this.base}/shares/${platform}/publish`, { ceremonyId, caption });
+  getFacebookPages(): Observable<FacebookPage[]> {
+    return this.http.get<FacebookPage[]>(`${this.base}/shares/facebook/pages`);
   }
 
-  uploadScreenshot(ceremonyId: string, platform: Platform, file: File): Observable<ShareSubmission> {
-    const form = new FormData();
-    form.append('ceremonyId', ceremonyId);
-    form.append('file', file, file.name);
-    return this.http.post<ShareSubmission>(`${this.base}/shares/${platform}/screenshot`, form);
+  publishToFacebookPage(ceremonyId: string, pageId: string, caption: string): Observable<Submission> {
+    return this.http.post<Submission>(`${this.base}/shares/facebook/publish`, { ceremonyId, pageId, caption });
   }
 
-  /**
-   * Returns the provider authorize URL. The backend builds it with a `state` bound to the
-   * signed-in user and ceremony, so this goes through HttpClient (and any auth interceptor)
-   * rather than being a bare popup navigation that would carry no bearer token.
-   */
-  getAuthorizeUrl(ceremonyId: string, platform: Platform): Observable<{ authorizeUrl: string }> {
-    return this.http.get<{ authorizeUrl: string }>(`${this.base}/oauth/${platform}/start`, {
-      params: { ceremonyId },
+  getTikTokCreatorInfo(): Observable<TikTokCreatorInfo> {
+    return this.http.get<TikTokCreatorInfo>(`${this.base}/shares/tiktok/creator-info`);
+  }
+
+  publishToTikTok(ceremonyId: string, caption: string, privacyLevel: string): Observable<Submission> {
+    return this.http.post<Submission>(`${this.base}/shares/tiktok/publish`, { ceremonyId, caption, privacyLevel });
+  }
+
+  /** Facebook personal profile / TikTok app: the partner confirms it themselves. */
+  selfConfirm(ceremonyId: string, platform: 'facebook' | 'tiktok', postUrl: string | null): Observable<Submission> {
+    return this.http.post<Submission>(`${this.base}/shares/${platform}/self-confirm`, { ceremonyId, postUrl });
+  }
+
+  getAdminCeremony(ceremonyId: string, adminKey: string): Observable<AdminCeremony> {
+    return this.http.get<AdminCeremony>(`${this.base}/admin/ceremonies/${ceremonyId}/shares`, {
+      headers: new HttpHeaders({ 'X-Admin-Key': adminKey }),
     });
+  }
+
+  /** Provider authorize URL; `state` is bound to this session server-side. */
+  getAuthorizeUrl(ceremonyId: string, platform: Platform): Observable<{ authorizeUrl: string }> {
+    return this.http.get<{ authorizeUrl: string }>(`${this.base}/oauth/${platform}/start`, { params: { ceremonyId } });
   }
 }

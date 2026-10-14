@@ -13,12 +13,16 @@ public static class DotEnv
         ["LINKEDIN_CLIENT_SECRET"] = "OAuth:LinkedIn:ClientSecret",
         ["FACEBOOK_APP_ID"] = "OAuth:Facebook:ClientId",
         ["FACEBOOK_APP_SECRET"] = "OAuth:Facebook:ClientSecret",
-        ["INSTAGRAM_APP_ID"] = "OAuth:Instagram:ClientId",
-        ["INSTAGRAM_APP_SECRET"] = "OAuth:Instagram:ClientSecret",
+        ["INSTAGRAM_APP_SECRET"] = "Instagram:AppSecret",
+        ["INSTAGRAM_WEBHOOK_VERIFY_TOKEN"] = "Instagram:WebhookVerifyToken",
+        ["INSTAGRAM_TISORO_ACCESS_TOKEN"] = "Instagram:TisoroAccessToken",
         ["TIKTOK_CLIENT_KEY"] = "OAuth:TikTok:ClientId",
         ["TIKTOK_CLIENT_SECRET"] = "OAuth:TikTok:ClientSecret",
+        ["TIKTOK_VIDEO_URL"] = "Share:Ceremony:Platforms:tiktok:VideoUrl",
         ["X_CLIENT_ID"] = "OAuth:X:ClientId",
         ["X_CLIENT_SECRET"] = "OAuth:X:ClientSecret",
+        ["X_BEARER_TOKEN"] = "X:BearerToken",
+        ["ADMIN_KEY"] = "Admin:Key",
     };
 
     public static IConfigurationBuilder AddDotEnv(this IConfigurationBuilder config, string path)

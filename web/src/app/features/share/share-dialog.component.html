@@ -1,0 +1,423 @@
+@let m = meta();
+@let cfg = config();
+<div class="mbg" (click)="onBackdrop($event)">
+  <div class="m" [class.wide]="mode() === 'guide'" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
+    <!-- header -->
+    <div class="mh">
+      <app-platform-icon [platform]="platform()" [size]="38" />
+      <div class="t">
+        @switch (mode()) {
+          @case ('preview') {
+            <b id="share-dialog-title">{{ m.name }} preview</b><span>{{ cfg.format }}</span>
+          }
+          @case ('chooser') {
+            <b id="share-dialog-title">{{ m.act }}</b><span>Choose how to share</span>
+          }
+          @case ('flow') {
+            <b id="share-dialog-title">{{ m.name }} · Step {{ i() + 1 }} of {{ steps().length }}</b><span>{{ pathMeta().label }}</span>
+          }
+          @case ('guide') {
+            <b id="share-dialog-title">How sharing on {{ m.name }} works</b><span>{{ pathMeta().label }}</span>
+          }
+        }
+      </div>
+      @if (mode() === 'flow' || mode() === 'guide') {
+        <span class="detect" [class]="'detect ' + pathMeta().ver">{{ verificationLabel(pathMeta().ver) }}</span>
+      }
+      <button type="button" class="x" aria-label="Close" (click)="close()">×</button>
+    </div>
+
+    @if (mode() === 'flow') {
+      <div class="steps">
+        @for (s of steps(); track $index) {
+          <span [class.past]="$index < i()" [class.on]="$index === i()">{{ $index < i() ? '✓ ' : $index + 1 + '. ' }}{{ s.label }}</span>
+        }
+      </div>
+    }
+
+    <!-- body -->
+    <div class="mb">
+      @switch (mode()) {
+        @case ('preview') {
+          <div class="prev">
+            @if (m.shape === 'tall') {
+              <div class="phone" style="margin: 0"><div class="ps"><app-video-thumb shape="tall" [size]="204" [company]="company()" /></div></div>
+            } @else {
+              <app-video-thumb shape="wide" [size]="400" [company]="company()" />
+            }
+            <div class="prev-side">
+              <b class="eyebrow">Caption, written by Tisoro</b>
+              <div class="capbox" style="min-height: 0">{{ cfg.caption }}</div>
+              <p style="font-size: 13.5px">This is the post Tisoro Global published at <a [href]="cfg.postUrl" target="_blank" rel="noopener"><b>{{ cfg.postUrl }}</b></a>. You share this same post.</p>
+            </div>
+          </div>
+        }
+        @case ('chooser') {
+          <p>How do you want to share on {{ m.name }}?</p>
+          <div class="opts">
+            @for (key of pathKeys(); track key) {
+              @let pm = m.paths[key]!;
+              <button type="button" class="opt" (click)="startFlow(key)">
+                <div><b>{{ pm.label }}</b><span class="d">{{ pm.desc }}</span></div>
+                <span [class]="'detect ' + pm.ver">{{ verificationLabel(pm.ver) }}</span>
+              </button>
+            }
+          </div>
+        }
+        @case ('flow') {
+          @if (error(); as e) {
+            <div class="miss" role="alert"><span class="bang">!</span><div>{{ e }}</div></div>
+          }
+          <ng-container *ngTemplateOutlet="body; context: { $implicit: step(), preview: false }" />
+        }
+        @case ('guide') {
+          @if (pathKeys().length > 1) {
+            <div class="gtabs" role="group" aria-label="Ways to share">
+              @for (key of pathKeys(); track key) {
+                <button type="button" [attr.aria-pressed]="key === path()" (click)="openGuide(key)">{{ m.paths[key]!.label }}</button>
+              }
+            </div>
+            <div class="gwhy">{{ pathMeta().desc }}</div>
+          }
+          <div class="ggrid">
+            @for (s of guideSteps(); track $index; let last = $last) {
+              <div class="gstep">
+                <div class="gpv"><div class="in"><ng-container *ngTemplateOutlet="body; context: { $implicit: s, preview: true }" /></div></div>
+                <div class="gcap">
+                  <span class="n" [class.ok]="last">{{ last ? '✓' : $index + 1 }}</span>
+                  <div>
+                    <b>{{ s.label }}@if (s.first) {<em>First time only</em>}@if (s.onComputer) {<em>On a computer</em>}</b>
+                    <span>{{ s.note || (s.auto ? 'Happens by itself.' : last ? 'The row on this screen updates, and Tisoro’s team sees it.' : '') }}</span>
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+        }
+      }
+    </div>
+
+    <!-- footer -->
+    <div class="mf">
+      @switch (mode()) {
+        @case ('preview') {
+          <span class="note"></span>
+          <div class="bb">
+            <button type="button" class="b lt" (click)="close()">Close</button>
+            @if (store.submission(platform()).status === 'NotStarted') {
+              <button type="button" class="b red" (click)="share()"><ng-container *ngTemplateOutlet="shareIcon" />{{ m.act }}</button>
+            }
+          </div>
+        }
+        @case ('chooser') {
+          <span class="note"></span>
+          <div class="bb"><button type="button" class="b lt" (click)="close()">Cancel</button></div>
+        }
+        @case ('flow') {
+          @let s = step();
+          <span class="note">{{ s.note }}</span>
+          <div class="bb">
+            @if (s.kind === 'xChecking' && miss()) {
+              <button type="button" class="b lt" (click)="back()">Back to the post</button>
+              <button type="button" class="b red" (click)="checkAgain()">Check again</button>
+            } @else if (!s.auto) {
+              @if (canGoBack()) {
+                <button type="button" class="b lt" (click)="back()">Back</button>
+              }
+              @if (s.alt) {
+                <button type="button" class="b lt" (click)="notYet()">{{ s.alt }}</button>
+              }
+              <button type="button" class="b" [class.red]="!s.final" [class.dk]="s.final" [disabled]="busy()" (click)="next()">
+                {{ busy() && s.kind === 'connect' ? 'Waiting for ' + m.name + '…' : s.btn }}
+              </button>
+            }
+          </div>
+        }
+        @case ('guide') {
+          <span class="note">All steps at a glance. Try it to click through them for real.</span>
+          <div class="bb">
+            <button type="button" class="b lt" (click)="close()">Close</button>
+            @if (store.submission(platform()).status === 'NotStarted') {
+              <button type="button" class="b red" (click)="startFlow(path())">Try it</button>
+            }
+          </div>
+        }
+      }
+    </div>
+  </div>
+</div>
+
+<!-- One template per step, used live (preview=false) and in the steps overview (preview=true). -->
+<ng-template #body let-s let-preview="preview">
+  @switch (s.kind) {
+    @case ('connect') {
+      @switch (platform()) {
+        @case ('facebook') {
+          <p>Connect Facebook and choose the company Page to share on.</p>
+          <div class="perm"><i>✓</i>See the Pages you manage</div>
+          <div class="perm"><i>✓</i>Post to the Page you choose, only when you click</div>
+        }
+        @case ('tiktok') {
+          <p>Connect TikTok once. We upload Tisoro’s ceremony video to your account when you click.</p>
+          <div class="perm"><i>✓</i>Post this video to your account when you click</div>
+          <div class="perm"><i>✓</i>Nothing is posted without your click</div>
+        }
+        @default {
+          <p>Connect your {{ meta().name }} account once. After that, sharing Tisoro posts on {{ meta().name }} is one click.</p>
+          <div class="perm"><i>✓</i>{{ platform() === 'linkedin' ? 'Repost Tisoro posts to your profile when you click' : 'Post to your timeline when you click' }}</div>
+          <div class="perm"><i>✓</i>Nothing is ever posted without your click</div>
+        }
+      }
+      <div class="perm"><i>✓</i>Disconnect any time from your Partner Area</div>
+    }
+
+    @case ('review') {
+      <div class="prev">
+        <app-video-thumb shape="wide" [size]="220" [company]="company()" />
+        <p style="flex: 1 1 180px">
+          @switch (platform()) {
+            @case ('linkedin') { You’re reposting Tisoro Global’s ceremony post to your profile. }
+            @case ('x') { You’re quoting Tisoro Global’s ceremony post. }
+            @case ('facebook') { You’re sharing Tisoro Global’s ceremony post to <b>{{ preview ? 'Harrington Wells Private Bank' : pageName() }}</b>. }
+          }
+        </p>
+      </div>
+      <ng-container *ngTemplateOutlet="captionEditor; context: { preview }" />
+    }
+
+    @case ('posting') {
+      <div class="working" role="status">
+        <div class="spin" aria-hidden="true"></div>
+        <b>
+          @switch (platform()) {
+            @case ('linkedin') { Reposting to LinkedIn }
+            @case ('x') { Posting to X }
+            @case ('facebook') { Posting to your Page }
+            @case ('tiktok') { Uploading to TikTok }
+          }
+        </b>
+        <p>{{ platform() === 'tiktok' ? 'A 30-second video takes a few seconds.' : 'Usually takes a few seconds.' }}</p>
+      </div>
+    }
+
+    @case ('xUsername') {
+      <p>Tell us your X username so we can find your repost.</p>
+      <div class="field">
+        <label for="xu">X username</label>
+        <input id="xu" placeholder="@yourcompany" autocomplete="off" [disabled]="preview" [value]="preview ? '' : xUser()" (input)="xUser.set(value($event))" (keydown.enter)="next()" />
+      </div>
+    }
+
+    @case ('xRepost') {
+      <p>Open Tisoro’s post on X and tap <b>Repost</b>, or <b>Quote</b> to add our caption.</p>
+      <div class="tw">
+        <div class="who"><i>T</i><div><b>Tisoro Global</b><small>&#64;Tisoro_Global</small></div></div>
+        <div style="font-size: 13.5px">Welcoming {{ company() }} to the Tisoro Network.</div>
+        <app-video-thumb shape="wide" [size]="390" [company]="company()" />
+        <div class="bar"><span>💬</span><span class="hl"><ng-container *ngTemplateOutlet="repostIcon" /> Repost</span><span>♡</span><span>↗</span></div>
+      </div>
+      <div class="row-btns">
+        <a class="b lt" [href]="config().postUrl" target="_blank" rel="noopener"><ng-container *ngTemplateOutlet="shareIcon" />Open post on X</a>
+        <button type="button" class="b lt" [disabled]="preview" (click)="copyCaption()"><ng-container *ngTemplateOutlet="copyIcon" />Copy caption</button>
+      </div>
+    }
+
+    @case ('xChecking') {
+      @if (miss() && !preview) {
+        <div class="miss">
+          <span class="bang">!</span>
+          <div><b>We couldn’t find a repost from &#64;{{ xUser() }} yet.</b><br />Check that you reposted from that account, and that it’s public. New reposts can take a minute to show up.</div>
+        </div>
+      } @else {
+        <div class="working" role="status">
+          <div class="spin" aria-hidden="true"></div>
+          <b>Looking for &#64;{{ preview ? 'yourcompany' : xUser() }}’s repost</b>
+          <p>We’re checking the reposts and quotes of Tisoro’s post.</p>
+        </div>
+      }
+    }
+
+    @case ('igUsername') {
+      <p>Tell us your Instagram username. When you mention &#64;{{ tisoroIg }} in your Story, this is how we know it was you.</p>
+      <div class="field">
+        <label for="igu">Instagram username</label>
+        <input id="igu" placeholder="@yourcompany" autocomplete="off" [disabled]="preview" [value]="preview ? '' : igUser()" (input)="igUser.set(value($event))" (keydown.enter)="next()" />
+      </div>
+    }
+
+    @case ('openOnPhone') {
+      <div class="qrwrap">
+        <div class="qr">
+          @if (qr(); as src) {
+            <img [src]="src" alt="QR code linking to Tisoro’s post" />
+          } @else {
+            <div class="qr-ph"></div>
+          }
+        </div>
+        <div class="qr-side">
+          <p><b>Scan with your phone camera.</b></p>
+          <p>Tisoro’s ceremony {{ platform() === 'instagram' ? 'Reel' : 'video' }} opens directly in the {{ meta().name }} app. {{ meta().name }} only allows this from a phone.</p>
+          <p class="hint">Or open this link on your phone: <button type="button" class="linkb" [disabled]="preview" (click)="copyLink()">copy link</button></p>
+        </div>
+      </div>
+    }
+
+    @case ('igAddToStory') {
+      <p>Under the Reel, tap the <b>share</b> icon, then <b>Add to story</b>.</p>
+      @if (phone && !preview) {
+        <a class="b dk" [href]="config().postUrl" target="_blank" rel="noopener">Open the Reel in Instagram</a>
+      }
+      <div class="phone">
+        <div class="ps">
+          <ng-container *ngTemplateOutlet="reelBg" />
+          <div class="sheet"><b>Share</b><div class="sheet-sub">Send to friends or add to your story</div><button type="button" class="a" [disabled]="preview" (click)="next()">Add to story</button></div>
+        </div>
+      </div>
+    }
+
+    @case ('igMention') {
+      <p>Tap the <b>sticker</b> icon, choose <b>Mention</b> and type <b>&#64;{{ tisoroIg }}</b>. Without the mention, we can’t confirm your share.</p>
+      <div class="phone">
+        <div class="ps">
+          <div class="story-bg"></div>
+          <div class="story-reel"><app-video-thumb shape="tall" [size]="104" [company]="company()" /></div>
+          <div class="mention">&#64;{{ tisoroIg.toUpperCase() }}</div>
+          <div class="sheet" style="bottom: 10px; padding: 8px"><button type="button" class="a" style="margin: 0" [disabled]="preview || busy()" (click)="next()">Your story</button></div>
+        </div>
+      </div>
+    }
+
+    @case ('igConfirming') {
+      <div class="working" role="status">
+        <div class="spin" aria-hidden="true"></div>
+        <b>Waiting for Instagram</b>
+        <p>We’ll confirm as soon as Instagram tells us &#64;{{ preview ? 'yourcompany' : igUser() }} mentioned &#64;{{ tisoroIg }}. Usually under a minute. You can close this window; the row updates by itself.</p>
+      </div>
+    }
+
+    @case ('fbChoosePage') {
+      <p>Which Page should we post to?</p>
+      @if (preview) {
+        <label class="radio"><input type="radio" checked disabled /><span class="pa">HW</span><span><b>Harrington Wells Private Bank</b><small>Company Page, 12.4K followers</small></span></label>
+        <label class="radio"><input type="radio" disabled /><span class="pa">HC</span><span><b>Harrington Wells Careers</b><small>Company Page, 2.1K followers</small></span></label>
+      } @else if (pages(); as list) {
+        @for (p of list; track p.id) {
+          <label class="radio" [class.off]="!p.canPost">
+            <input type="radio" name="fb-page" [value]="p.id" [checked]="p.id === pageId()" [disabled]="!p.canPost" (change)="pageId.set(p.id)" />
+            <span class="pa">{{ initials(p.name) }}</span>
+            <span><b>{{ p.name }}</b><small>{{ p.canPost ? followers(p.followers) : 'You can’t post on this Page' }}</small></span>
+          </label>
+        } @empty {
+          <p class="hint">We didn’t find any Facebook Pages you manage. Ask your Page admin to add you, or go back and share on your personal profile instead.</p>
+        }
+      } @else {
+        <div class="working" role="status"><div class="spin" aria-hidden="true"></div><p>Loading your Pages…</p></div>
+      }
+    }
+
+    @case ('fbShareWindow') {
+      <p>We copied our caption. Facebook doesn’t allow pre-filled captions, so paste it in Facebook’s share window.</p>
+      <div class="row-btns">
+        <button type="button" class="b dk" [disabled]="preview" (click)="openFacebookSharer()"><ng-container *ngTemplateOutlet="shareIcon" />Open Facebook’s share window</button>
+        <button type="button" class="b lt" [disabled]="preview" (click)="copyCaption()"><ng-container *ngTemplateOutlet="copyIcon" />Copy caption again</button>
+      </div>
+      <div class="fbwin" aria-hidden="true">
+        <div class="top"><app-platform-icon platform="facebook" [size]="22" />Share to your timeline</div>
+        <div class="body">
+          <div class="capbox fake">{{ config().caption }}</div>
+          <span class="hint">Paste with Ctrl+V, or long-press on a phone. Set the post to Public.</span>
+          <app-video-thumb shape="wide" [size]="260" [company]="company()" />
+        </div>
+      </div>
+    }
+
+    @case ('ttReview') {
+      <div class="prev">
+        <app-video-thumb shape="tall" [size]="120" [company]="company()" />
+        <div class="prev-side">
+          <p>This posts as a new video on your profile, with Tisoro credited in the caption.</p>
+          <div class="field">
+            <label for="ttv">Who can view</label>
+            <select id="ttv" [disabled]="preview || !privacyOptions()" (change)="privacy.set(value($event))">
+              <option value="" [selected]="!privacy()" disabled>{{ privacyOptions() || preview ? 'Choose who can view' : 'Loading…' }}</option>
+              @for (o of preview ? ['PUBLIC_TO_EVERYONE', 'FOLLOWER_OF_CREATOR'] : (privacyOptions() ?? []); track o) {
+                <option [value]="o" [selected]="o === privacy()">{{ privacyLabels[o] ?? o }}</option>
+              }
+            </select>
+          </div>
+        </div>
+      </div>
+      <ng-container *ngTemplateOutlet="captionEditor; context: { preview }" />
+    }
+
+    @case ('ttRepost') {
+      <p>Tisoro Global’s ceremony video opens in TikTok. Tap <b>Repost</b>.</p>
+      @if (phone && !preview) {
+        <a class="b dk" [href]="config().postUrl" target="_blank" rel="noopener">Open the video in TikTok</a>
+      }
+      <div class="phone">
+        <div class="ps">
+          <ng-container *ngTemplateOutlet="reelBg" />
+          <button type="button" class="tt-repost" aria-label="Repost" [disabled]="preview" (click)="next()"><ng-container *ngTemplateOutlet="repostIcon" /></button>
+          <span class="tt-repost-label">Repost</span>
+        </div>
+      </div>
+    }
+
+    @case ('confirmSelf') {
+      @if (platform() === 'facebook') {
+        <p style="font-size: 16px"><b>Did you share it on Facebook?</b></p>
+        <p>Facebook doesn’t tell us about shares from personal profiles, so your tap confirms it.</p>
+        <div class="field">
+          <label for="fbl">Link to your post (optional)</label>
+          <input id="fbl" placeholder="https://facebook.com/…" autocomplete="off" [disabled]="preview" [value]="preview ? '' : postLink()" (input)="postLink.set(value($event))" />
+          <small>Helps our team feature it faster.</small>
+        </div>
+      } @else {
+        <p style="font-size: 16px"><b>Did you repost it on TikTok?</b></p>
+        <p>TikTok doesn’t share repost data with us, so your tap confirms it.</p>
+      }
+    }
+
+    @case ('done') {
+      @let d = preview ? sampleDoneView() : doneView();
+      <div class="big-ok">
+        @if (d.waiting) {
+          <div class="spin" aria-hidden="true"></div>
+        } @else {
+          <span class="c" [class.self]="d.self">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" [attr.stroke]="d.self ? '#B45309' : '#16A34A'" stroke-width="2.4"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          </span>
+        }
+        <b>{{ d.title }}</b>
+        <p>{{ d.detail }}</p>
+        @if (d.evidence; as ev) {
+          <div class="evid" [class.self]="d.self"><span>{{ d.self ? 'ⓘ' : '✓' }}</span><span>{{ ev }}</span></div>
+        }
+      </div>
+    }
+  }
+</ng-template>
+
+<ng-template #captionEditor let-preview="preview">
+  <label class="cap-label" for="cap">Caption, written by Tisoro. Edit it if you like.</label>
+  <textarea class="capbox" id="cap" [disabled]="preview" [value]="preview ? config().caption : caption()" (input)="caption.set(value($event))"></textarea>
+  @if (platform() === 'x') {
+    <div class="cnt" [class.over]="!preview && captionOver()">{{ preview ? [...config().caption].length : captionLength() }} / {{ meta().captionLimit }}</div>
+  }
+</ng-template>
+
+<ng-template #reelBg>
+  <div class="reel-bg"></div>
+  <div class="reel-title">Welcoming<br />{{ company() }}</div>
+</ng-template>
+
+<ng-template #shareIcon>
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5" /></svg>
+</ng-template>
+<ng-template #copyIcon>
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
+</ng-template>
+<ng-template #repostIcon>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 013-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 01-3 3H3" /></svg>
+</ng-template>

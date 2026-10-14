@@ -4,8 +4,13 @@ import { environment } from '../environments/environment';
 export const routes: Routes = [
   {
     path: 'ceremonies/:ceremonyId/verify-share',
-    title: 'Verify Your Share · Tisoro',
-    loadComponent: () => import('./features/verify-share/verify-share.page').then((m) => m.VerifySharePage),
+    title: 'Your Ceremony Is Live · Tisoro',
+    loadComponent: () => import('./features/share/share.page').then((m) => m.SharePage),
+  },
+  {
+    path: 'admin/ceremonies/:ceremonyId',
+    title: 'Ceremony · Tisoro admin',
+    loadComponent: () => import('./features/admin/admin.page').then((m) => m.AdminPage),
   },
   {
     path: 'oauth/callback',

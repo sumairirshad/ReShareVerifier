@@ -1,12 +1,7 @@
 # Tisoro Share API (.NET 10)
 
-Backend for the Verify Your Share page. Currently implements **real OAuth** for LinkedIn, Facebook,
-Instagram, TikTok and X, plus **real publishing** for LinkedIn (`POST /api/shares/linkedin/publish`
-reshares Tisoro's post via the Posts API, spec §4.2) and Instagram (`POST /api/shares/instagram/publish`
-posts the ceremony video as a Reel via the Graph API, spec §4.4). The handle shown on each card comes
-from the user's own account. The remaining publish/verify endpoints (X, Facebook, TikTok) return `501`
-until the next step — see `verify-your-share-spec.md` §2 for why Facebook can't be a direct-publish
-endpoint like LinkedIn/Instagram (Meta no longer lets apps post to a user's personal timeline).
+Backend for Tisoro screen 09, "Share Your Ceremony And Get Featured" (design:
+`\\10.10.8.200\Documentation\Tisoro\social-media-sharing\social-media-share-flow.html`).
 
 ## Run
 
@@ -15,69 +10,78 @@ cd api/Tisoro.Share.Api && dotnet run      # https://localhost:5001
 cd web && npm start                        # https://127.0.0.1:4200 (proxies /api and /hubs to :5001)
 ```
 
-Open https://127.0.0.1:4200/ceremonies/demo/verify-share. (`npm run start:demo` = old in-browser fake.)
+Open **https://127.0.0.1:4200** (not localhost: X rejects localhost callback URLs, and the sign-in cookie
+must match). `npm run start:demo` runs the page against an in-browser fake instead.
 
-## 1. Register this redirect URI in each developer app
+On startup the API logs what's switched on, e.g.
+`Sign-in configured for: X` and `X repost check: off · Instagram mention webhook: off · Admin view: off`.
+
+## How each platform is shared and confirmed
+
+| Platform | Ways to share | Confirmed by | Needs (in `.env`) |
+|---|---|---|---|
+| LinkedIn | Repost through Tisoro | ✅ Post ID from LinkedIn's Posts API | `LINKEDIN_CLIENT_ID/SECRET` |
+| X | Repost through Tisoro | ✅ Post ID from X's API (quote post) | `X_CLIENT_ID/SECRET` (scope `tweet.write`; X bills per post) |
+| X | Repost on X yourself | ✅ Username found in the reposts/quotes of Tisoro's post | `X_BEARER_TOKEN` |
+| Instagram | Story with @tisoroglobal mention | ✅ Instagram's `story_mention` webhook to Tisoro's account | `INSTAGRAM_APP_SECRET`, `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `INSTAGRAM_TISORO_ACCESS_TOKEN` |
+| Facebook | Post to your company Page | ✅ Post ID from the Pages API | `FACEBOOK_APP_ID/SECRET` |
+| Facebook | Share on your personal profile | 🟡 Partner taps "Yes, I shared" | — |
+| TikTok | Post to your TikTok | ✅ TikTok publish status | `TIKTOK_CLIENT_KEY/SECRET`, `TIKTOK_VIDEO_URL` |
+| TikTok | Repost in the TikTok app | 🟡 Partner taps "Yes, I reposted" | — |
+
+Which ways are offered per platform is `Share:Ceremony:Platforms:<platform>:Paths` in `appsettings.json`
+(e.g. drop `"api"` from TikTok until TikTok's audit passes).
+
+## Keys
+
+Copy `.env.example` to `.env` (git-ignored) and fill in what you have. **Never put keys in `appsettings.json`** —
+it's committed. Restart the API after changing `.env`.
+
+### Redirect URIs to register (sign-in)
 
 | Platform | Where | Redirect URI |
 |---|---|---|
-| LinkedIn | developer.linkedin.com → app → Auth → *Authorized redirect URLs* | `https://127.0.0.1:4200/api/oauth/linkedin/callback` |
-| Facebook | developers.facebook.com → app → Facebook Login → Settings → *Valid OAuth Redirect URIs* | `https://127.0.0.1:4200/api/oauth/facebook/callback` |
-| Instagram | same Meta app → Instagram → API setup with Instagram login → *Business login settings* | `https://127.0.0.1:4200/api/oauth/instagram/callback` |
-| TikTok | developers.tiktok.com → app → Login Kit → *Redirect URI* | `https://127.0.0.1:4200/api/oauth/tiktok/callback` |
-| X | developer.x.com → app → User authentication settings (OAuth 2.0, *Web App / confidential client*) → *Callback URI* | `https://127.0.0.1:4200/api/oauth/x/callback` |
+| LinkedIn | app → Auth → Authorized redirect URLs | `https://127.0.0.1:4200/api/oauth/linkedin/callback` |
+| X | app → User authentication settings (Web App, OAuth 2.0, Read and write) → Callback URI | `https://127.0.0.1:4200/api/oauth/x/callback` |
+| Facebook | app → Facebook Login for Business → Settings → Valid OAuth Redirect URIs | `https://127.0.0.1:4200/api/oauth/facebook/callback` |
+| TikTok | app → Login Kit → Redirect URI | `https://<public-host>/api/oauth/tiktok/callback` (TikTok refuses localhost; use a tunnel and set `OAUTH_PUBLIC_BASE_URL`) |
 
-Products/scopes to enable per app are listed in `appsettings.json` → `OAuth:*:Scopes`. For LinkedIn,
-`w_member_social` requires the **Share on LinkedIn** (or Community Management API) product — add it under
-your app's *Products* tab, not just *Sign In with LinkedIn using OpenID Connect* — or the authorize request
-is rejected with "Scope ... is not authorized for your application".
+### Instagram Story mentions (webhook)
 
-Some providers (TikTok in particular, sometimes Instagram) refuse `localhost` redirect URIs. If so, expose
-the SPA through an HTTPS tunnel (e.g. ngrok), register `https://<tunnel-host>/api/oauth/<platform>/callback`,
-and set `OAuth:PublicBaseUrl` to `https://<tunnel-host>`.
+Partners don't sign in to Instagram. Tisoro's own Instagram professional account receives a webhook when
+someone mentions @tisoroglobal in a Story:
 
-## 2. Add the keys with user secrets (never commit them, never paste them in chat)
+1. Meta app → Instagram → API setup with Instagram login → generate a token for Tisoro's account with
+   `instagram_business_basic` + `instagram_business_manage_messages` → `INSTAGRAM_TISORO_ACCESS_TOKEN`.
+2. Webhooks → callback URL `https://<public-host>/api/webhooks/instagram`, verify token = `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`,
+   subscribe to `messages`. Must be a public HTTPS URL (a tunnel works for testing).
+3. `instagram_business_manage_messages` needs Meta App Review before it works for accounts outside the app's roles.
 
-```bash
-cd api/Tisoro.Share.Api
-dotnet user-secrets set "OAuth:LinkedIn:ClientId"      "..."
-dotnet user-secrets set "OAuth:LinkedIn:ClientSecret"  "..."
-dotnet user-secrets set "OAuth:Facebook:ClientId"      "<Meta App ID>"
-dotnet user-secrets set "OAuth:Facebook:ClientSecret"  "<Meta App Secret>"
-dotnet user-secrets set "OAuth:Instagram:ClientId"     "<Instagram App ID>"      # differs from the Meta App ID
-dotnet user-secrets set "OAuth:Instagram:ClientSecret" "<Instagram App Secret>"
-dotnet user-secrets set "OAuth:TikTok:ClientId"        "<Client Key>"
-dotnet user-secrets set "OAuth:TikTok:ClientSecret"    "<Client Secret>"
-dotnet user-secrets set "OAuth:X:ClientId"             "<OAuth 2.0 Client ID>"   # not the API key / bearer token
-dotnet user-secrets set "OAuth:X:ClientSecret"         "<OAuth 2.0 Client Secret>"
-```
+Every webhook is checked against `X-Hub-Signature-256` with `INSTAGRAM_APP_SECRET`.
 
-On startup the API logs `OAuth configured for: ...`. Unconfigured platforms show
-"*X sign-in isn't set up yet*" on their card instead of opening a popup.
+### Approvals
 
-## Before production approval
+- **Meta**: App Review + Business Verification for `pages_manage_posts`, `pages_read_engagement`, `instagram_business_manage_messages`.
+  Until then only app admins/developers/testers can use them.
+- **TikTok**: audit for Direct Post; before it, posts can only be private ("Only me"). The video URL's domain must be verified in the app.
+- **X**: the free tier can't read reposts/quotes; `X_BEARER_TOKEN` needs a paid (pay-per-use or Basic) plan.
 
-Meta (`user_posts`, Instagram publishing) and TikTok (`video.publish`) only work for accounts added as
-testers/developers on the app until App Review / audit is approved. LinkedIn and X work for anyone.
+## Endpoints
 
-## How it works
+| Method | Route | |
+|---|---|---|
+| GET | `/api/ceremonies/{id}/share-config` | Tisoro's posts, formats, captions, ways to share |
+| GET | `/api/ceremonies/{id}/shares` | This partner's status per platform |
+| GET | `/api/oauth/{platform}/start` · `/callback` | Sign-in (linkedin, x, facebook, tiktok) |
+| POST | `/api/shares/linkedin/publish` · `/x/publish` | Post through Tisoro `{ ceremonyId, caption }` |
+| POST | `/api/shares/x/check` | Find the partner's own repost `{ ceremonyId, username }` |
+| POST | `/api/shares/instagram/expect` | Start waiting for the Story mention `{ ceremonyId, username }` |
+| GET / POST | `/api/shares/facebook/pages` · `/facebook/publish` | List Pages · post `{ ceremonyId, pageId, caption }` |
+| GET / POST | `/api/shares/tiktok/creator-info` · `/tiktok/publish` | Privacy options · post `{ ceremonyId, caption, privacyLevel }` |
+| POST | `/api/shares/{facebook\|tiktok}/self-confirm` | Partner confirms `{ ceremonyId, postUrl? }` |
+| GET / POST | `/api/webhooks/instagram` | Meta verification · story mentions |
+| GET | `/api/admin/ceremonies/{id}/shares` | Admin view (header `X-Admin-Key` = `ADMIN_KEY`) |
+| — | SignalR `/hubs/share` | `JoinCeremony(id)`; pushes `shareStatusChanged { ceremonyId, submission }` |
 
-1. `GET /api/oauth/{platform}/start` → random `state` (+ PKCE for X) bound to the browser's session cookie → `{ authorizeUrl }`.
-2. SPA opens that URL in a popup; the user signs in on the real platform.
-3. `GET /api/oauth/{platform}/callback` → state checked (one-time) → code exchanged with the client secret →
-   profile read (username/name) → token encrypted with Data Protection → redirect to SPA `/oauth/callback?handle=...`.
-4. `GET /api/ceremonies/{id}/shares` reports `connected` + `handle`, so a reload keeps the account connected.
-5. `POST /api/shares/linkedin/publish` uses the stored token to call the Posts API with
-   `reshareContext.parent = {ceremony's LinkedIn post URN}` and the confirmed caption as `commentary`.
-   The created post's URN comes back in the `x-restli-id` response header; on success the submission is
-   marked `Verified` with a `https://www.linkedin.com/feed/update/{urn}/` link. A 401 here means the stored
-   token expired — the SPA sends the user back to Connect.
-6. `POST /api/shares/instagram/publish` creates a Reel media container from
-   `Share:Ceremony:Platforms:instagram:VideoUrl` (must be a public HTTPS URL — Instagram's servers fetch
-   the video from it; see spec §10), polls its `status_code` until `FINISHED` (inline, up to ~60s — there's
-   no background job runner yet, so this is a stand-in for the spec's poller), then calls `media_publish`.
-   Marks `Verified` with the Reel's permalink. **`VideoUrl` is empty by default** — set it in
-   `appsettings.json` (or override via `.env`/user secrets as `Share__Ceremony__Platforms__instagram__VideoUrl`)
-   before trying this, or publish fails with "No ceremony video URL is configured for Instagram."
-
-Tokens and share progress are in memory for now (lost on restart); SQL Server tables from spec §6 come next.
+Share actions are rate-limited to 20/minute per browser. Tokens and share state are in memory for now
+(lost on restart); the SQL Server tables from the spec come next.

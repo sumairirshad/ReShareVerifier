@@ -1,43 +1,26 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { ToastService } from './toast.service';
 
+/** Single dark toast at the bottom centre, as in the prototype. */
 @Component({
   selector: 'app-toast-host',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @for (t of toasts.toasts(); track t.id) {
-      <div class="toast" [class]="'toast toast--' + t.kind" role="status">
-        <span>{{ t.message }}</span>
-        <button type="button" aria-label="Dismiss" (click)="toasts.dismiss(t.id)">×</button>
-      </div>
-    }
+    <div class="toast" [class.on]="!!latest()" [class.error]="latest()?.kind === 'error'" role="status" aria-live="polite">
+      {{ latest()?.message }}
+    </div>
   `,
   styles: `
-    :host {
-      position: fixed;
-      inset: auto 16px 16px auto;
-      z-index: 1000;
-      display: grid;
-      gap: 8px;
-      max-width: min(360px, calc(100vw - 32px));
-    }
     .toast {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      color: #fff;
-      background: #111827;
-      box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+      position: fixed; left: 50%; bottom: 24px; z-index: 80; max-width: calc(100% - 32px);
+      transform: translateX(-50%) translateY(16px); opacity: 0; pointer-events: none; transition: 0.25s;
+      background: #2b2b2b; color: #fff; padding: 11px 16px; border-radius: 10px; font-size: 14px; font-weight: 600;
     }
-    .toast--success { background: #15803d; }
-    .toast--error { background: #b91c1c; }
-    span { flex: 1; }
-    button { border: 0; background: none; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+    .toast.on { opacity: 1; transform: translateX(-50%); }
+    .toast.error { background: var(--crimson); }
   `,
 })
 export class ToastHostComponent {
-  protected readonly toasts = inject(ToastService);
+  private readonly toasts = inject(ToastService);
+  protected readonly latest = computed(() => this.toasts.toasts().at(-1));
 }

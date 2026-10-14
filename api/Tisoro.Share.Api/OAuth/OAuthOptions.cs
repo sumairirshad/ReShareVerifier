@@ -10,7 +10,6 @@ public sealed class OAuthOptions
 
     public ProviderOptions LinkedIn { get; set; } = new();
     public ProviderOptions Facebook { get; set; } = new();
-    public ProviderOptions Instagram { get; set; } = new();
     /// <summary>TikTok calls the client ID a "client key".</summary>
     public ProviderOptions TikTok { get; set; } = new();
     public ProviderOptions X { get; set; } = new();

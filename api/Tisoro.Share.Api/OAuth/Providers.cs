@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 namespace Tisoro.Share.Api.OAuth;
@@ -45,7 +46,7 @@ public sealed class LinkedInProvider(HttpClient http, IOptions<OAuthOptions> opt
     }
 
     /// <summary>
-    /// Reshares Tisoro's post with the user's commentary via the Posts API (spec §4.2).
+    /// Reshares Tisoro's post with the user's commentary via the Posts API.
     /// <paramref name="authorUrn"/> is "urn:li:person:{sub}"; <paramref name="parentUrn"/> is Tisoro's post URN.
     /// Returns the created post's URN (from the `x-restli-id` response header; the API returns no body).
     /// </summary>
@@ -72,7 +73,7 @@ public sealed class LinkedInProvider(HttpClient http, IOptions<OAuthOptions> opt
         if (!res.IsSuccessStatusCode)
         {
             var body = await res.Content.ReadAsStringAsync(ct);
-            logger.LogWarning("LinkedIn publish failed: {Status} {Body}", (int)res.StatusCode, body);
+            Logger.LogWarning("LinkedIn publish failed: {Status} {Body}", (int)res.StatusCode, body);
             throw new OAuthProviderException("provider_error", $"LinkedIn rejected the post ({(int)res.StatusCode}).");
         }
         return res.Headers.TryGetValues("x-restli-id", out var ids) && ids.FirstOrDefault() is { Length: > 0 } id
@@ -81,7 +82,7 @@ public sealed class LinkedInProvider(HttpClient http, IOptions<OAuthOptions> opt
     }
 }
 
-/// <summary>Facebook Login with user_posts (read-only; used to verify the user's own share).</summary>
+/// <summary>Facebook Login for Pages: list the Pages a user manages and post to one of them.</summary>
 public sealed class FacebookProvider(HttpClient http, IOptions<OAuthOptions> options, ILogger<FacebookProvider> logger)
     : OAuthProviderBase(http, logger)
 {
@@ -124,104 +125,52 @@ public sealed class FacebookProvider(HttpClient http, IOptions<OAuthOptions> opt
         return new ProviderProfile(Required(Str(me, "id"), "id"), Str(me, "name") ?? "Facebook user");
     }
 
+    /// <summary>Pages the user manages. Each comes with its own Page access token, which never leaves the server.</summary>
+    public async Task<IReadOnlyList<FacebookPage>> GetPagesAsync(string userToken, CancellationToken ct)
+    {
+        var json = await GetJsonAsync(Url($"{Graph}/me/accounts", new Dictionary<string, string?>
+        {
+            ["fields"] = "id,name,fan_count,access_token,tasks",
+            ["limit"] = "100",
+            ["access_token"] = userToken,
+            ["appsecret_proof"] = AppSecretProof(userToken),
+        }), ct);
+        if (!json.TryGetProperty("data", out var data)) return [];
+        return data.EnumerateArray().Select(p => new FacebookPage(
+            Required(Str(p, "id"), "id"),
+            Str(p, "name") ?? "Page",
+            p.TryGetProperty("fan_count", out var f) && f.TryGetInt64(out var n) ? n : 0,
+            Required(Str(p, "access_token"), "access_token"),
+            // Posting needs the CREATE_CONTENT task on the Page.
+            p.TryGetProperty("tasks", out var tasks) && tasks.EnumerateArray().Any(t => t.GetString() == "CREATE_CONTENT"))).ToList();
+    }
+
+    /// <summary>Posts Tisoro's ceremony post as a link with the partner's caption. Returns the post ID ("{pageId}_{postId}").</summary>
+    public async Task<string> PostToPageAsync(string pageToken, string pageId, string link, string message, CancellationToken ct)
+    {
+        var json = await PostFormAsync($"{Graph}/{pageId}/feed", new()
+        {
+            ["link"] = link,
+            ["message"] = message,
+            ["access_token"] = pageToken,
+            ["appsecret_proof"] = AppSecretProof(pageToken),
+        }, ct);
+        return Required(Str(json, "id"), "id");
+    }
+
     /// <summary>Required when "Require App Secret" is on in the Meta app; harmless otherwise.</summary>
     public string AppSecretProof(string accessToken) =>
         Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(Options.ClientSecret), Encoding.UTF8.GetBytes(accessToken)));
 }
 
-/// <summary>Instagram API with Instagram Login (Business/Creator accounts only).</summary>
-public sealed class InstagramProvider(HttpClient http, IOptions<OAuthOptions> options, ILogger<InstagramProvider> logger)
-    : OAuthProviderBase(http, logger)
-{
-    public override string Platform => "instagram";
-    public override string DisplayName => "Instagram";
-    public override ProviderOptions Options => options.Value.Instagram;
+public sealed record FacebookPage(string Id, string Name, long Followers, string AccessToken, bool CanPost);
 
-    public override string BuildAuthorizeUrl(string state, string redirectUri, string? codeChallenge) =>
-        Url("https://www.instagram.com/oauth/authorize", new Dictionary<string, string?>
-        {
-            ["client_id"] = Options.ClientId,
-            ["redirect_uri"] = redirectUri,
-            ["response_type"] = "code",
-            ["scope"] = Options.Scopes,
-            ["state"] = state,
-        });
-
-    public override async Task<TokenResult> ExchangeCodeAsync(string code, string redirectUri, string? codeVerifier, CancellationToken ct)
-    {
-        var json = await PostFormAsync("https://api.instagram.com/oauth/access_token", new()
-        {
-            ["client_id"] = Options.ClientId,
-            ["client_secret"] = Options.ClientSecret,
-            ["grant_type"] = "authorization_code",
-            ["redirect_uri"] = redirectUri,
-            ["code"] = code,
-        }, ct);
-        // Response is either flat or wrapped in data[0] depending on API version.
-        var body = json.TryGetProperty("data", out var data) && data.ValueKind == System.Text.Json.JsonValueKind.Array && data.GetArrayLength() > 0
-            ? data[0]
-            : json;
-        return new TokenResult(Required(Str(body, "access_token"), "access_token"), DateTimeOffset.UtcNow.AddHours(1), Str(body, "user_id"));
-    }
-
-    public override async Task<ProviderProfile> GetProfileAsync(TokenResult token, CancellationToken ct)
-    {
-        var me = await GetJsonAsync(Url("https://graph.instagram.com/v23.0/me", new Dictionary<string, string?>
-        {
-            ["fields"] = "user_id,username,account_type",
-            ["access_token"] = token.AccessToken,
-        }), ct);
-        var accountType = Str(me, "account_type");
-        return new ProviderProfile(
-            Str(me, "user_id") ?? Required(token.PlatformUserId, "user_id"),
-            Required(Str(me, "username"), "username"),
-            IsPersonalInstagram: string.Equals(accountType, "PERSONAL", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Publishes the ceremony video as a Reel (spec §4.4): creates a media container from
-    /// <paramref name="videoUrl"/> (must be a public HTTPS URL Instagram's servers can fetch), polls it
-    /// until processed, then publishes it. Returns the published Reel's permalink.
-    /// </summary>
-    public async Task<string> PublishReelAsync(string accessToken, string igUserId, string videoUrl, string caption, CancellationToken ct)
-    {
-        var container = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media", new()
-        {
-            ["media_type"] = "REELS",
-            ["video_url"] = videoUrl,
-            ["caption"] = caption,
-        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
-        var containerId = Required(Str(container, "id"), "id");
-
-        // No background job runner yet, so poll inline with a bounded wait (spec's poller comes later).
-        var ready = false;
-        for (var attempt = 0; attempt < 20 && !ready; attempt++)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(3), ct);
-            var status = await GetJsonAsync($"https://graph.instagram.com/v23.0/{containerId}?fields=status_code", ct, accessToken);
-            var code = Str(status, "status_code");
-            if (code is "ERROR" or "EXPIRED")
-                throw new OAuthProviderException("provider_error", "Instagram couldn't process the video for this Reel.");
-            ready = code == "FINISHED";
-        }
-        if (!ready)
-            throw new OAuthProviderException("provider_error", "Instagram is still processing the video — please try again shortly.");
-
-        var publish = await PostFormAsync($"https://graph.instagram.com/v23.0/{igUserId}/media_publish", new()
-        {
-            ["creation_id"] = containerId,
-        }, ct, new AuthenticationHeaderValue("Bearer", accessToken));
-        var mediaId = Required(Str(publish, "id"), "id");
-
-        var media = await GetJsonAsync($"https://graph.instagram.com/v23.0/{mediaId}?fields=permalink", ct, accessToken);
-        return Str(media, "permalink") ?? $"https://www.instagram.com/reel/{mediaId}/";
-    }
-}
-
-/// <summary>TikTok Login Kit (v2) + Content Posting API.</summary>
+/// <summary>TikTok Login Kit (v2) + Content Posting API (Direct Post).</summary>
 public sealed class TikTokProvider(HttpClient http, IOptions<OAuthOptions> options, ILogger<TikTokProvider> logger)
     : OAuthProviderBase(http, logger)
 {
+    private const string Api = "https://open.tiktokapis.com/v2";
+
     public override string Platform => "tiktok";
     public override string DisplayName => "TikTok";
     public override ProviderOptions Options => options.Value.TikTok;
@@ -238,7 +187,7 @@ public sealed class TikTokProvider(HttpClient http, IOptions<OAuthOptions> optio
 
     public override async Task<TokenResult> ExchangeCodeAsync(string code, string redirectUri, string? codeVerifier, CancellationToken ct)
     {
-        var json = await PostFormAsync("https://open.tiktokapis.com/v2/oauth/token/", new()
+        var json = await PostFormAsync($"{Api}/oauth/token/", new()
         {
             ["client_key"] = Options.ClientId,
             ["client_secret"] = Options.ClientSecret,
@@ -255,13 +204,53 @@ public sealed class TikTokProvider(HttpClient http, IOptions<OAuthOptions> optio
     {
         // `username` needs the user.info.profile scope; fall back to display_name without it.
         var fields = Options.Scopes.Contains("user.info.profile") ? "open_id,display_name,username" : "open_id,display_name";
-        var json = await GetJsonAsync($"https://open.tiktokapis.com/v2/user/info/?fields={fields}", ct, token.AccessToken);
-        var user = json.GetProperty("data").GetProperty("user");
+        var user = Data(await GetJsonAsync($"{Api}/user/info/?fields={fields}", ct, token.AccessToken)).GetProperty("user");
         return new ProviderProfile(Required(Str(user, "open_id"), "open_id"), Str(user, "username") ?? Str(user, "display_name") ?? "TikTok user");
+    }
+
+    /// <summary>TikTok requires showing the creator's allowed privacy levels before every post.</summary>
+    public async Task<TikTokCreatorInfo> QueryCreatorInfoAsync(string token, CancellationToken ct)
+    {
+        var d = Data(await PostJsonAsync($"{Api}/post/publish/creator_info/query/", new { }, ct, token));
+        var options = d.TryGetProperty("privacy_level_options", out var o) ? o.EnumerateArray().Select(x => x.GetString()!).ToList() : [];
+        return new TikTokCreatorInfo(Str(d, "creator_nickname") ?? Str(d, "creator_username") ?? "", options);
+    }
+
+    /// <summary>Starts a Direct Post that TikTok pulls from <paramref name="videoUrl"/> (domain must be verified in the app). Returns the publish ID.</summary>
+    public async Task<string> InitVideoPublishAsync(string token, string caption, string privacyLevel, string videoUrl, CancellationToken ct)
+    {
+        var d = Data(await PostJsonAsync($"{Api}/post/publish/video/init/", new
+        {
+            post_info = new { title = caption, privacy_level = privacyLevel },
+            source_info = new { source = "PULL_FROM_URL", video_url = videoUrl },
+        }, ct, token));
+        return Required(Str(d, "publish_id"), "publish_id");
+    }
+
+    /// <summary>Status is PROCESSING_DOWNLOAD, PROCESSING_UPLOAD, PUBLISH_COMPLETE or FAILED.</summary>
+    public async Task<TikTokPublishStatus> FetchPublishStatusAsync(string token, string publishId, CancellationToken ct)
+    {
+        var d = Data(await PostJsonAsync($"{Api}/post/publish/status/fetch/", new { publish_id = publishId }, ct, token));
+        // TikTok's field name really is misspelled ("publicaly").
+        var postId = d.TryGetProperty("publicaly_available_post_id", out var ids) && ids.ValueKind == JsonValueKind.Array && ids.GetArrayLength() > 0
+            ? ids[0].GetRawText()
+            : null;
+        return new TikTokPublishStatus(Str(d, "status") ?? "", Str(d, "fail_reason"), postId);
+    }
+
+    /// <summary>TikTok returns 200 with an error envelope; anything but "ok" is a failure.</summary>
+    private static JsonElement Data(JsonElement json)
+    {
+        if (json.TryGetProperty("error", out var err) && Str(err, "code") is { } code && code != "ok")
+            throw new OAuthProviderException(code, Str(err, "message") is { Length: > 0 } m ? $"TikTok: {m}" : $"TikTok rejected the request ({code}).");
+        return json.GetProperty("data");
     }
 }
 
-/// <summary>X OAuth 2.0 Authorization Code with PKCE (confidential client).</summary>
+public sealed record TikTokCreatorInfo(string Nickname, IReadOnlyList<string> PrivacyOptions);
+public sealed record TikTokPublishStatus(string Status, string? FailReason, string? PostId);
+
+/// <summary>X OAuth 2.0 Authorization Code with PKCE (confidential client), and posting as the user.</summary>
 public sealed class XProvider(HttpClient http, IOptions<OAuthOptions> options, ILogger<XProvider> logger)
     : OAuthProviderBase(http, logger)
 {
@@ -301,5 +290,12 @@ public sealed class XProvider(HttpClient http, IOptions<OAuthOptions> options, I
         var json = await GetJsonAsync("https://api.x.com/2/users/me", ct, token.AccessToken);
         var data = json.GetProperty("data");
         return new ProviderProfile(Required(Str(data, "id"), "id"), Required(Str(data, "username"), "username"));
+    }
+
+    /// <summary>Quote-posts Tisoro's post as the connected user (needs tweet.write). Returns the new post ID.</summary>
+    public async Task<string> PostQuoteAsync(string accessToken, string text, string quoteTweetId, CancellationToken ct)
+    {
+        var json = await PostJsonAsync("https://api.x.com/2/tweets", new { text, quote_tweet_id = quoteTweetId }, ct, accessToken);
+        return Required(Str(json.GetProperty("data"), "id"), "id");
     }
 }

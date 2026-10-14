@@ -1,0 +1,108 @@
+<app-shell>
+  <div class="ms">Milestone 3 of 4</div>
+  <ol class="stepper">
+    <li class="done"><span class="d">✓</span>Complete Your Signup</li>
+    <li class="done"><span class="d">✓</span>Complete Your Profile</li>
+    <li class="cur"><span class="d">3</span>Join Tisoro Network</li>
+    <li class="todo"><span class="d">4</span>Activate Your Regional Office</li>
+  </ol>
+
+  <h1 class="h1">Your Tisoro Network Induction Ceremony Is Live</h1>
+  <p class="lead">
+    Congratulations, your company’s induction into the Tisoro Network is now live. Your ceremony has been produced and
+    published across Tisoro Global’s official channels, introducing {{ store.config()?.companyName || 'your company' }} to
+    high-net-worth families and industry leaders worldwide.
+  </p>
+  <div class="video" role="img" [attr.aria-label]="'Ceremony video: Welcoming ' + (store.config()?.companyName ?? '')">
+    <div class="bar"></div>
+    <div class="c">
+      <div class="e">Tisoro Network Induction</div>
+      <div class="t">Welcoming<br />{{ store.config()?.companyName }}</div>
+    </div>
+    <div class="play"><svg width="40%" height="40%" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l10.5-6.5z" /></svg></div>
+  </div>
+
+  <section class="card" aria-labelledby="share-h">
+    <span class="pill corner">Optional</span>
+    <h3 id="share-h">Share Your Ceremony And Get Featured</h3>
+    <p class="lead" style="font-size: 15px">
+      Tisoro has already published your ceremony on its official channels. Share that same post to your own profiles,
+      with a caption we’ve written for you. Share within 24 hours and we’ll feature it.
+    </p>
+    @if (store.anyShared()) {
+      <div class="done-note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2.2"><circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.7 2.7L16 9.8" /></svg>
+        <span><b>Thanks for sharing.</b> Your ceremony will be featured on Tisoro Global’s official channels.</span>
+      </div>
+    }
+
+    @if (store.loading()) {
+      <div class="list" aria-busy="true">
+        @for (_ of [1, 2, 3, 4, 5]; track $index) {
+          <div class="pr skeleton"></div>
+        }
+      </div>
+    } @else if (store.loadError(); as e) {
+      <p class="load-error" role="alert">{{ e }} <button type="button" class="linkb" (click)="store.load(ceremonyId())">Try again</button></p>
+    } @else {
+      <div class="list">
+        @for (row of store.rows(); track row.meta.platform) {
+          <div class="pr">
+            <div class="pf">
+              <app-platform-icon [platform]="row.meta.platform" />
+              <div>
+                <b>{{ row.meta.name }} <span class="fmt">{{ row.config.format }}</span></b>
+                <span class="how" [class.fail]="row.sub.status === 'NotStarted' && row.sub.failureReason">
+                  {{ how(row) }}
+                  @if (row.sub.status === 'Verified' && row.sub.postUrl) {
+                    <a [href]="row.sub.postUrl" target="_blank" rel="noopener">View post ↗</a>
+                  }
+                </span>
+                <button type="button" class="guide-link" (click)="dialog.set({ mode: 'guide', platform: row.meta.platform })">View sharing steps ›</button>
+              </div>
+            </div>
+            <div class="acts">
+              @switch (row.sub.status) {
+                @case ('Verified') {
+                  <span class="okpill">✓ {{ doneLabel(row) }}</span>
+                }
+                @case ('SelfConfirmed') {
+                  <span class="selfpill">✓ You confirmed it</span>
+                }
+                @case ('Waiting') {
+                  <span class="waitpill"><span class="dot"></span>{{ row.meta.platform === 'instagram' ? 'Checking your Story' : 'Uploading to TikTok' }}</span>
+                }
+                @default {
+                  @if (row.config.availability === 'comingSoon') {
+                    <span class="pill">Coming soon</span>
+                  } @else {
+                    <button type="button" class="b lt" (click)="dialog.set({ mode: 'preview', platform: row.meta.platform })">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>Preview
+                    </button>
+                    <button type="button" class="b dk" (click)="share(row)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5" /></svg>{{ row.meta.act }}
+                    </button>
+                  }
+                }
+              }
+            </div>
+          </div>
+        }
+      </div>
+    }
+    <div class="foot">
+      Green means the platform confirmed your share. Amber means you confirmed it yourself, because Facebook profiles and
+      the TikTok app don’t tell us. Skip any platform you don’t use.
+    </div>
+  </section>
+
+  <button class="cta" type="button" (click)="continue()">
+    Continue To Activate Your Office
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
+  </button>
+  <div class="later">You can also share later from your Partner Area.</div>
+</app-shell>
+
+@if (dialog(); as d) {
+  <app-share-dialog [request]="d" (closed)="dialog.set(null)" />
+}

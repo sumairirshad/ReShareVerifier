@@ -49,6 +49,14 @@ public sealed class ConnectionStore(IDataProtectionProvider dataProtection)
         Get(sessionId, platform) is { } c ? protector.Unprotect(c.EncryptedAccessToken) : null;
 
     public void Remove(string sessionId, string platform) => connections.TryRemove((sessionId, platform), out _);
+
+    // Extra per-session secrets derived from a connection (e.g. Facebook Page tokens). Encrypted like the main token.
+    private readonly ConcurrentDictionary<(string Session, string Key), string> secrets = new();
+
+    public void SaveSecret(string sessionId, string key, string value) => secrets[(sessionId, key)] = protector.Protect(value);
+
+    public string? GetSecret(string sessionId, string key) =>
+        secrets.TryGetValue((sessionId, key), out var v) ? protector.Unprotect(v) : null;
 }
 
 public sealed record Connection(string EncryptedAccessToken, DateTimeOffset ExpiresAt, string PlatformUserId, string Handle);

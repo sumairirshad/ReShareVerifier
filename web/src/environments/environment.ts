@@ -6,4 +6,6 @@ export const environment = {
   shareHubPath: '/hubs/share',
   /** When true, HTTP calls, OAuth and SignalR are served by an in-browser fake backend. */
   useMockApi: false,
+  /** Screen 10 (Activate Your Office) in the host app. Empty = show a placeholder toast. */
+  continueUrl: '',
 };

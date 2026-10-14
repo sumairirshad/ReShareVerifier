@@ -7,6 +7,7 @@ namespace Tisoro.Share.Api.OAuth;
 public abstract class OAuthProviderBase(HttpClient http, ILogger logger) : IOAuthProvider
 {
     protected HttpClient Http { get; } = http;
+    protected ILogger Logger { get; } = logger;
 
     public abstract string Platform { get; }
     public abstract string DisplayName { get; }
@@ -26,6 +27,13 @@ public abstract class OAuthProviderBase(HttpClient http, ILogger logger) : IOAut
         return SendAsync(req, ct);
     }
 
+    protected Task<JsonElement> PostJsonAsync(string url, object body, CancellationToken ct, string? bearer = null)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = System.Net.Http.Json.JsonContent.Create(body) };
+        if (bearer is not null) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        return SendAsync(req, ct);
+    }
+
     protected Task<JsonElement> GetJsonAsync(string url, CancellationToken ct, string? bearer = null)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -41,7 +49,7 @@ public abstract class OAuthProviderBase(HttpClient http, ILogger logger) : IOAut
         if (!res.IsSuccessStatusCode)
         {
             // Never log tokens; provider error bodies don't contain them.
-            logger.LogWarning("{Provider} {Method} {Path} failed: {Status} {Body}",
+            Logger.LogWarning("{Provider} {Method} {Path} failed: {Status} {Body}",
                 DisplayName, req.Method, req.RequestUri?.AbsolutePath, (int)res.StatusCode, body);
             throw new OAuthProviderException("provider_error", $"{DisplayName} rejected the request ({(int)res.StatusCode}).");
         }

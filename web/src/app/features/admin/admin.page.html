@@ -1,0 +1,104 @@
+<app-shell>
+  <div class="adm-h">
+    <small>Tisoro admin · Ceremonies</small>
+    <h1 class="h1">{{ data()?.companyName || 'Ceremony' }}</h1>
+    <p class="lead" style="font-size: 15px">
+      Induction ceremony. This page follows the ceremony through all three steps, and updates as the partner shares on
+      screen 09.
+    </p>
+  </div>
+
+  @if (!key()) {
+    <form class="key" (submit)="submitKey($event, keyInput.value)">
+      <div class="field">
+        <label for="admin-key">Admin key</label>
+        <input #keyInput id="admin-key" type="password" autocomplete="off" />
+        <small>The ADMIN_KEY set on the Tisoro API.</small>
+      </div>
+      <button type="submit" class="b red">Open</button>
+    </form>
+  }
+  @if (error(); as e) {
+    <p class="err" role="alert">{{ e }}</p>
+  }
+
+  @if (data(); as d) {
+    <section class="stage">
+      <div class="stage-h">
+        <span class="n ok">✓</span>
+        <div><b>1. Published on Tisoro’s official pages</b><span>The ceremony video went live on all five platforms first.</span></div>
+      </div>
+      <div class="tblw">
+        <table class="tbl">
+          <thead><tr><th>Platform</th><th>Status</th><th>Official post</th><th>Format</th></tr></thead>
+          <tbody>
+            @for (o of d.official; track o.platform) {
+              <tr>
+                <td><span class="pfc"><app-platform-icon [platform]="o.platform" [size]="28" />{{ name(o.platform) }}</span></td>
+                <td><span class="st live">● Live</span></td>
+                <td><a [href]="o.postUrl" target="_blank" rel="noopener"><code>{{ o.postUrl }}</code></a></td>
+                <td class="nw">{{ o.format }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="stage">
+      <div class="stage-h">
+        <span class="n ok">✓</span>
+        <div><b>2. Share request sent to the partner</b><span>Shown on screen 09 after induction.</span></div>
+      </div>
+      <div class="req">
+        <div class="r">✓ Shown on screen 09</div>
+        <div class="r hint">◷ Feature window closes 24 hours after the request</div>
+        <div class="r hint">✉ Email to the partner isn’t set up yet</div>
+      </div>
+    </section>
+
+    @for (p of partners(); track p.partner) {
+      <section class="stage">
+        <div class="stage-h">
+          <span class="n" [class.ok]="p.done">{{ p.done ? '✓' : '3' }}</span>
+          <div><b>3. Partner shares and we confirm · {{ p.partner }}</b><span>{{ p.done }} of {{ platforms.length }} platforms shared, {{ p.verified }} verified by the platform.</span></div>
+        </div>
+        <div class="tblw">
+          <table class="tbl">
+            <thead><tr><th>Platform</th><th>Status</th><th>How it was confirmed, and proof</th><th>Time</th></tr></thead>
+            <tbody>
+              @for (s of p.rows; track s.platform) {
+                <tr>
+                  <td><span class="pfc"><app-platform-icon [platform]="s.platform" [size]="28" />{{ name(s.platform) }}</span></td>
+                  <td><span class="st" [class]="'st ' + status[s.status][0]">{{ status[s.status][1] }}</span></td>
+                  <td class="proof">
+                    @if (s.method) {
+                      <b>{{ s.method }}</b><br />{{ s.evidence }}
+                      @if (s.postUrl) {
+                        · <a [href]="s.postUrl" target="_blank" rel="noopener">post</a>
+                      }
+                    } @else {
+                      <span class="hint">—</span>
+                    }
+                  </td>
+                  <td class="nw">{{ s.updatedAt ? (s.updatedAt | date: 'shortTime') : '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="legend">
+          <div><span class="st verified">✓ Verified</span><span>The platform itself confirmed the share: an API response, a match in the reposts list, or a mention from Instagram.</span></div>
+          <div><span class="st self">Partner confirmed</span><span>The partner tapped to confirm. Facebook profiles and the TikTok app don’t report shares, so this can’t be checked automatically.</span></div>
+        </div>
+      </section>
+    } @empty {
+      <section class="stage">
+        <div class="stage-h">
+          <span class="n">3</span>
+          <div><b>3. Partner shares and we confirm</b><span>No shares yet. This updates every 15 seconds.</span></div>
+        </div>
+      </section>
+    }
+  }
+</app-shell>
